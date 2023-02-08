@@ -34,8 +34,11 @@ class FCNMaskHead(BaseModule):
                  conv_cfg=None,
                  norm_cfg=None,
                  predictor_cfg=dict(type='Conv'),
+                 keypoint_pool_size=1,
                  loss_mask=dict(
                      type='CrossEntropyLoss', use_mask=True, loss_weight=1.0),
+                #  loss_keypoint=dict(
+                #      type='SmoothL1Loss', beta=1.0, loss_weight=1.0),
                  init_cfg=None):
         assert init_cfg is None, 'To prevent abnormal initialization ' \
                                  'behavior, init_cfg is not allowed to be set'
@@ -112,6 +115,14 @@ class FCNMaskHead(BaseModule):
         self.relu = nn.ReLU(inplace=True)
         self.debug_imgs = None
 
+
+        self.keypoint_pool_size = keypoint_pool_size
+        self.keypoint_pool = nn.AdaptiveAvgPool2d((keypoint_pool_size, keypoint_pool_size))
+        self.keypoint_head = nn.Linear(in_features=in_channels*keypoint_pool_size*keypoint_pool_size, out_features=8)
+        # self.loss_keypoint = build_loss(loss_keypoint)
+        self.loss_keypoint = nn.SmoothL1Loss(reduction='mean')
+
+
     def init_weights(self):
         super(FCNMaskHead, self).init_weights()
         for m in [self.upsample, self.conv_logits]:
@@ -133,7 +144,14 @@ class FCNMaskHead(BaseModule):
             if self.upsample_method == 'deconv':
                 x = self.relu(x)
         mask_pred = self.conv_logits(x)
-        return mask_pred
+
+        x = self.keypoint_pool(x)
+        x = x.view(x.size(0), -1)
+        keypoint_pred = self.keypoint_head(x)
+        
+        # mask_keypoints = [torch.rand([1, 8]).cuda() for i in range(2)]
+
+        return mask_pred, keypoint_pred
 
     def get_targets(self, sampling_results, gt_masks, rcnn_train_cfg):
         pos_proposals = [res.pos_bboxes for res in sampling_results]
@@ -144,8 +162,8 @@ class FCNMaskHead(BaseModule):
                                    gt_masks, rcnn_train_cfg)
         return mask_targets
 
-    @force_fp32(apply_to=('mask_pred', ))
-    def loss(self, mask_pred, mask_targets, labels):
+    @force_fp32(apply_to=('mask_pred', 'keypoint_pred'))
+    def loss(self, mask_pred, mask_targets, keypoint_pred, keypoint_targets, labels):
         """
         Example:
             >>> from mmdet.models.roi_heads.mask_heads.fcn_mask_head import *  # NOQA
@@ -173,7 +191,13 @@ class FCNMaskHead(BaseModule):
                                            torch.zeros_like(labels))
             else:
                 loss_mask = self.loss_mask(mask_pred, mask_targets, labels)
-        loss['loss_mask'] = loss_mask
+
+        keypoint_targets = torch.cat([keypoint_targets[..., 0:2], keypoint_targets[..., 3:5], keypoint_targets[..., 6:8], keypoint_targets[..., 9:11]], dim=1)
+        loss_keypoint = self.loss_keypoint(keypoint_pred, keypoint_targets)
+        
+        # loss['loss_mask'] = loss_mask
+        # loss['loss_mask'] = loss_keypoint
+        loss['loss_mask'] = loss_mask + 1.*loss_keypoint
         return loss
 
     def get_seg_masks(self, mask_pred, det_bboxes, det_labels, rcnn_test_cfg,

@@ -230,6 +230,7 @@ class LoadAnnotations:
                  with_label=True,
                  with_mask=False,
                  with_seg=False,
+                 with_keypoints=True,
                  poly2mask=True,
                  denorm_bbox=False,
                  file_client_args=dict(backend='disk')):
@@ -237,6 +238,7 @@ class LoadAnnotations:
         self.with_label = with_label
         self.with_mask = with_mask
         self.with_seg = with_seg
+        self.with_keypoints = with_keypoints
         self.poly2mask = poly2mask
         self.denorm_bbox = denorm_bbox
         self.file_client_args = file_client_args.copy()
@@ -377,6 +379,21 @@ class LoadAnnotations:
         results['seg_fields'].append('gt_semantic_seg')
         return results
 
+    def _load_keypoints(self, results):
+        """Private function to load semantic segmentation annotations.
+
+        Args:
+            results (dict): Result dict from :obj:`dataset`.
+
+        Returns:
+            dict: The dict contains loaded semantic segmentation annotations.
+        """
+        anno_info = results['ann_info']
+        results['gt_keypoints'] = anno_info['keypoints'].copy()
+        results['keypoint_fields'].append('gt_keypoints')
+        # keypoints_num = results['num_keypoints']
+        return results
+
     def __call__(self, results):
         """Call function to load multiple types annotations.
 
@@ -398,6 +415,8 @@ class LoadAnnotations:
             results = self._load_masks(results)
         if self.with_seg:
             results = self._load_semantic_seg(results)
+        if self.with_keypoints:
+            results = self._load_keypoints(results)
         return results
 
     def __repr__(self):
@@ -406,6 +425,7 @@ class LoadAnnotations:
         repr_str += f'with_label={self.with_label}, '
         repr_str += f'with_mask={self.with_mask}, '
         repr_str += f'with_seg={self.with_seg}, '
+        repr_str += f'with_keypoints={self.with_keypoints}, '
         repr_str += f'poly2mask={self.poly2mask}, '
         repr_str += f'file_client_args={self.file_client_args})'
         return repr_str

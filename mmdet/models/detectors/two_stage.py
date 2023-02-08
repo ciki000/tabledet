@@ -144,6 +144,8 @@ class TwoStageDetector(BaseDetector):
         else:
             proposal_list = proposals
 
+        # print(type(self.roi_head))
+        # print('kwargs:', kwargs)
         roi_losses = self.roi_head.forward_train(x, img_metas, proposal_list,
                                                  gt_bboxes, gt_labels,
                                                  gt_bboxes_ignore, gt_masks,

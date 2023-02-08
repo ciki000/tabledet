@@ -282,6 +282,17 @@ class Resize:
                     backend=self.backend)
             results[key] = gt_seg
 
+    def _resize_keypoints(self, results, keypoints_num=4):
+        img_shape = results['img_shape']
+        for key in results.get('keypoint_fields', []):
+            assert results['scale_factor'][:2].all() == results['scale_factor'][2:].all()
+            keypoints = results[key]
+            for index in range(keypoints_num):
+                keypoints[..., 3*index] *= results['scale_factor'][0]
+                keypoints[..., 3*index+1] *= results['scale_factor'][1]
+            results[key] = keypoints
+
+
     def __call__(self, results):
         """Call function to resize images, bounding boxes, masks, semantic
         segmentation map.
@@ -317,6 +328,7 @@ class Resize:
         self._resize_bboxes(results)
         self._resize_masks(results)
         self._resize_seg(results)
+        self._resize_keypoints(results)
         return results
 
     def __repr__(self):
@@ -427,6 +439,24 @@ class RandomFlip:
             raise ValueError(f"Invalid flipping direction '{direction}'")
         return flipped
 
+    def keypoint_flip(self, keypoints, img_shape, direction):
+        assert keypoints.shape[-1] % 12 == 0
+        flipped = keypoints.copy()
+        if direction == 'horizontal':
+            w = img_shape[1]
+            flipped[..., 0::3] = w - keypoints[..., 0::3]
+        elif direction == 'vertical':
+            h = img_shape[0]
+            flipped[..., 1::3] = h - keypoints[..., 1::3]
+        elif direction == 'diagonal':
+            w = img_shape[1]
+            h = img_shape[0]
+            flipped[..., 0::3] = w - keypoints[..., 0::3]
+            flipped[..., 1::3] = h - keypoints[..., 1::3]
+        else:
+            raise ValueError(f"Invalid flipping direction '{direction}'")
+        return flipped
+
     def __call__(self, results):
         """Call function to flip bounding boxes, masks, semantic segmentation
         maps.
@@ -480,6 +510,11 @@ class RandomFlip:
             for key in results.get('seg_fields', []):
                 results[key] = mmcv.imflip(
                     results[key], direction=results['flip_direction'])
+            # flip keypoints
+            for key in results.get('keypoint_fields', []):
+                results[key] = self.keypoint_flip(results[key],
+                                              results['img_shape'],
+                                              results['flip_direction'])
         return results
 
     def __repr__(self):

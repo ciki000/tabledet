@@ -80,20 +80,20 @@ class ImageToTensor:
 
     def __call__(self, results):
         """Call function to convert image in results to :obj:`torch.Tensor` and
-        transpose the channel order.
+        permute the channel order.
 
         Args:
             results (dict): Result dict contains the image data to convert.
 
         Returns:
             dict: The result dict contains the image converted
-                to :obj:`torch.Tensor` and transposed to (C, H, W) order.
+                to :obj:`torch.Tensor` and permuted to (C, H, W) order.
         """
         for key in self.keys:
             img = results[key]
             if len(img.shape) < 3:
                 img = np.expand_dims(img, -1)
-            results[key] = (to_tensor(img.transpose(2, 0, 1))).contiguous()
+            results[key] = to_tensor(img).permute(2, 0, 1).contiguous()
         return results
 
     def __repr__(self):
@@ -179,7 +179,7 @@ class DefaultFormatBundle:
     "proposals", "gt_bboxes", "gt_labels", "gt_masks" and "gt_semantic_seg".
     These fields are formatted as follows.
 
-    - img: (1)transpose, (2)to tensor, (3)to DataContainer (stack=True)
+    - img: (1)transpose & to tensor, (2)to DataContainer (stack=True)
     - proposals: (1)to tensor, (2)to DataContainer
     - gt_bboxes: (1)to tensor, (2)to DataContainer
     - gt_bboxes_ignore: (1)to tensor, (2)to DataContainer
@@ -226,10 +226,21 @@ class DefaultFormatBundle:
             results = self._add_default_meta_keys(results)
             if len(img.shape) < 3:
                 img = np.expand_dims(img, -1)
-            img = np.ascontiguousarray(img.transpose(2, 0, 1))
+            # To improve the computational speed by by 3-5 times, apply:
+            # If image is not contiguous, use
+            # `numpy.transpose()` followed by `numpy.ascontiguousarray()`
+            # If image is already contiguous, use
+            # `torch.permute()` followed by `torch.contiguous()`
+            # Refer to https://github.com/open-mmlab/mmdetection/pull/9533
+            # for more details
+            if not img.flags.c_contiguous:
+                img = np.ascontiguousarray(img.transpose(2, 0, 1))
+                img = to_tensor(img)
+            else:
+                img = to_tensor(img).permute(2, 0, 1).contiguous()
             results['img'] = DC(
-                to_tensor(img), padding_value=self.pad_val['img'], stack=True)
-        for key in ['proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels']:
+                img, padding_value=self.pad_val['img'], stack=True)
+        for key in ['proposals', 'gt_bboxes', 'gt_bboxes_ignore', 'gt_labels','gt_keypoints']:
             if key not in results:
                 continue
             results[key] = DC(to_tensor(results[key]))
@@ -344,6 +355,24 @@ class Collect:
         data['img_metas'] = DC(img_meta, cpu_only=True)
         for key in self.keys:
             data[key] = results[key]
+
+        ## check keypoints after transform
+        # from PIL import Image, ImageDraw
+        # img = results['img'].data
+        # keypoints = results['gt_keypoints'].data[0]
+        # c, h ,w = img.shape
+        # print(img.shape)
+        # # img[0,int(keypoints[1]),int(keypoints[0])] = 255.
+        # # img[1,int(keypoints[1]),int(keypoints[0])] = 0.
+        # # img[2,int(keypoints[1]),int(keypoints[0])] = 0.
+        # img = Image.fromarray(np.uint8(img.numpy().transpose((1,2,0))))
+        # draw = ImageDraw.Draw(img)
+        # draw.ellipse((int(keypoints[0])-3, int(keypoints[1])-3, int(keypoints[0])+3, int(keypoints[1])+3), fill=(255,0,0))
+        # draw.ellipse((int(keypoints[3])-3, int(keypoints[4])-3, int(keypoints[3])+3, int(keypoints[4])+3), fill=(255,0,0))
+        # draw.ellipse((int(keypoints[6])-3, int(keypoints[7])-3, int(keypoints[6])+3, int(keypoints[7])+3), fill=(255,0,0))
+        # draw.ellipse((int(keypoints[9])-3, int(keypoints[10])-3, int(keypoints[9])+3, int(keypoints[10])+3), fill=(255,0,0))
+        # img.save('./img'+str(h)+str(w)+'.jpg')
+        
         return data
 
     def __repr__(self):

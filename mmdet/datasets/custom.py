@@ -31,6 +31,7 @@ class CustomDataset(Dataset):
                 'ann': {
                     'bboxes': <np.ndarray> (n, 4) in (x1, y1, x2, y2) order.
                     'labels': <np.ndarray> (n, ),
+                    'key_points':
                     'bboxes_ignore': <np.ndarray> (k, 4), (optional field)
                     'labels_ignore': <np.ndarray> (k, 4) (optional field)
                 }
@@ -174,6 +175,8 @@ class CustomDataset(Dataset):
         results['bbox_fields'] = []
         results['mask_fields'] = []
         results['seg_fields'] = []
+        # results['key_points'] = []
+        results['keypoint_fields'] = []
 
     def _filter_imgs(self, min_size=32):
         """Filter images too small."""

@@ -162,9 +162,9 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         mask_feats = mask_roi_extractor(x[:mask_roi_extractor.num_inputs],
                                         rois)
         # do not support caffe_c4 model anymore
-        mask_pred = mask_head(mask_feats)
+        mask_pred, keypoint_pred = mask_head(mask_feats)
 
-        mask_results = dict(mask_pred=mask_pred)
+        mask_results = dict(mask_pred=mask_pred, keypoint_pred=keypoint_pred)
         return mask_results
 
     def _mask_forward_train(self,
@@ -173,7 +173,8 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                             sampling_results,
                             gt_masks,
                             rcnn_train_cfg,
-                            bbox_feats=None):
+                            bbox_feats=None,
+                            gt_keypoints=None):
         """Run forward function and calculate loss for mask head in
         training."""
         pos_rois = bbox2roi([res.pos_bboxes for res in sampling_results])
@@ -182,11 +183,31 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         mask_targets = self.mask_head[stage].get_targets(
             sampling_results, gt_masks, rcnn_train_cfg)
         pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
-        loss_mask = self.mask_head[stage].loss(mask_results['mask_pred'],
-                                               mask_targets, pos_labels)
+
+        keypoint_targets = self.keypoint_target(sampling_results, gt_keypoints)
+        loss_mask = self.mask_head[stage].loss(mask_results['mask_pred'], mask_targets, 
+                                               mask_results['keypoint_pred'], keypoint_targets,
+                                               pos_labels)
 
         mask_results.update(loss_mask=loss_mask)
         return mask_results
+
+    def keypoint_target(self, sampling_results, gt_keypoints):
+        pos_assigned_gt_inds = [
+            res.pos_assigned_gt_inds.cpu().numpy().tolist() for res in sampling_results
+        ]
+
+        targets_num = 0
+        for gt_inds in pos_assigned_gt_inds:
+            targets_num += len(gt_inds)
+        keypoint_targets = torch.zeros([targets_num, 12], device=gt_keypoints[0].device)
+        
+        targets_index = 0
+        for batch_index in range(len(pos_assigned_gt_inds)):
+            for gt_index in pos_assigned_gt_inds[batch_index]:
+                keypoint_targets[targets_index] = gt_keypoints[batch_index][gt_index]
+                targets_index += 1
+        return keypoint_targets
 
     def forward_train(self,
                       x,
@@ -195,7 +216,8 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                       gt_bboxes,
                       gt_labels,
                       gt_bboxes_ignore=None,
-                      gt_masks=None):
+                      gt_masks=None,
+                      gt_keypoints=None):
         """
         Args:
             x (list[Tensor]): list of multi-level img features.
@@ -256,7 +278,7 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             if self.with_mask:
                 mask_results = self._mask_forward_train(
                     i, x, sampling_results, gt_masks, rcnn_train_cfg,
-                    bbox_results['bbox_feats'])
+                    bbox_results['bbox_feats'], gt_keypoints)
                 for name, value in mask_results['loss_mask'].items():
                     losses[f's{i}.{name}'] = (
                         value * lw if 'loss' in name else value)
